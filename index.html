@@ -1,0 +1,255 @@
+<!-- TestVisualiser
+ WebAudioAPIの理解のため、Visualiserを作ってみる
+ 大まかな目標仕様
+  -オーディオ信号をAnalyserに入れて、周波数軸、時間軸のデータを表示
+  -オーディオソースはSoundCloud->oauthによる認証が難しいのでドラッグドロップでロードすることにする
+  -できればWebGLを使うところまで行きたい
+-->
+<!DOCTYPE html>
+<html lang="jp">
+<html>
+<head>
+<meta charset="utf8">
+<title>TestVisualiser</title>
+</head>
+<script src="three.min.js"></script>
+
+<script type="text/javascript">
+var audio=new Audio();
+
+var audioctx=new AudioContext();
+
+// analiser
+var analyser=audioctx.createAnalyser();
+analyser.fftSize=1024;
+// connect each node
+analyser.connect(audioctx.destination);
+
+var lowbandfilter=audioctx.createBiquadFilter();
+lowbandfilter.type = 2; // bandpass
+lowbandfilter.frequency.value = 1000;
+lowbandfilter.Q.value = 10;
+
+var analyserLow=audioctx.createAnalyser();
+analyserLow.fftSize=1024;
+lowbandfilter.connect(analyserLow);
+
+// test oscillator
+var testosc=null;
+function onClickPlay() {
+	if (testosc) {
+		testosc.stop(0);
+		testosc=null;
+	} else {
+		testosc=audioctx.createOscillator();
+		testosc.type="sawtooth";
+		testosc.connect(analyser);
+		testosc.start(0);
+	}
+}
+
+
+</script>
+
+<body>
+
+<canvas id="canvasfreq" width=400 height=100 style="position:absolute; left:5px; top:5px; border-style:solid; border-width:1px;"></canvas>
+<canvas id="canvaswave" width=400 height=100 style="position:absolute; left:5px; top:120px; border-style:solid; border-width:1px;"></canvas>
+<input type="button" value="playwave" onClick="onClickPlay()" style="position:absolute; left:0px; top:250px;">
+<div id="3darea" width=600 height=400 style="position:absolute; left:5px; top:305px; "></div>
+<div id="dropzone" style="position:absolute; left:5px; top:800px; width:600px; height:200px; border-style:solid; border-width:1px; display:table;">
+<div id="dropzonetext">drop audiofile here</div>
+</div>
+<input type="button" value="playaudio" onClick="onClickPlayAudio()" style="position:absolute; left:0px; top:1010px;">
+<style type="text/css">
+    #dropzonetext {
+        color: silver;
+        font-size: 32px;
+        text-align:center;
+        vertical-align: middle;
+        display: table-cell;
+    };
+</style>
+
+<script>
+    // drag/dropでファイルを読み込み
+    var source;
+    function handleFileSelect(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        var files = e.dataTransfer.files; // FileList object.
+        var file=files[0];
+        console.log(file);
+        if (!file.type.match('audio.*')) return;
+        var reader = new FileReader();
+        // buffer for audio play
+        source = audioctx.createBufferSource();
+        source.connect(analyser);
+
+        console.log(reader);
+        reader.onload = (function() {
+            audioctx.decodeAudioData(reader.result, function (buf) {
+                source.buffer = buf;
+            });
+            source.start(0);
+        });
+        reader.readAsArrayBuffer(file);
+   }
+
+    function handleDragOver(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy'; // Explicitly show this is a copy.
+    }
+
+    // Setup the dnd listeners.
+    var dropZone = document.getElementById('dropzone');
+    dropZone.addEventListener('dragover', handleDragOver, false);
+    dropZone.addEventListener('drop', handleFileSelect, false);
+
+    function onClickPlayAudio() {
+        if (source) {
+            source.stop(0);
+            source=null;
+        } else {
+            if (reader==undefined) return;
+            source = audioctx.createBufferSource();
+            source.connect(analyser);
+            source.connect(lowbandfilter);
+            audioctx.decodeAudioData(reader.result, function (buf) {
+                source.buffer = buf;
+            });
+            source.start(0);
+        }
+    }
+</script>
+
+<script>
+    // scene
+    var scene = new THREE.Scene();
+
+    // camera
+    var width  = 600;
+    var height = 400;
+    var fov    = 50;
+    var aspect = width / height;
+    var near   = 1;
+    var far    = 1000;
+    var camera = new THREE.PerspectiveCamera( fov, aspect, near, far );
+    camera.position.set( 100, 100, 100 );
+    camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+    // renderer
+    var renderer = new THREE.WebGLRenderer();
+    renderer.setSize( width, height );
+    document.getElementById("3darea").appendChild( renderer.domElement );
+ 
+    // light
+    var directionalLight = new THREE.DirectionalLight( 0xffffff );
+    directionalLight.position.set( 0, 0.7, 0.7 );
+    scene.add( directionalLight );
+
+    // cube
+    var cube;
+    {
+        var geometry = new THREE.CubeGeometry( 30, 30, 30 );
+        var material = new THREE.MeshPhongMaterial( { color: 0xffffff, wireframe:false } );
+        cube = new THREE.Mesh( geometry, material );
+    }
+    cube.position.set(0,0,50);
+    scene.add( cube );
+
+    // plane
+    var plane;
+    {
+        var geometry = new THREE.PlaneGeometry( 300, 300 );
+        var material = new THREE.MeshPhongMaterial( { color: 0xff1212, side:THREE.DoubleSide } );
+        plane = new THREE.Mesh( geometry, material );
+    }
+    plane.position.set(0,0,0);
+    scene.add( plane );
+
+    // sphere
+    var sphere;
+    {
+        var geometry = new THREE.SphereGeometry( 20, 20, 20 );
+        var material = new THREE.MeshPhongMaterial({
+                        color: 0xffffff, ambient: 0xffffff,
+                        specular: 0xcccccc, shininess:30, metal:true,
+                        map: THREE.ImageUtils.loadTexture('./earth.jpg') });
+        sphere=new THREE.Mesh(geometry,material);
+    }
+    sphere.position.set(50,0,80);
+    scene.add(sphere);
+
+    // helper
+    var axis = new THREE.AxisHelper(1000);
+    axis.position.set(0,0,0);
+    scene.add(axis);
+
+    // render
+    renderer.render( scene, camera );
+</script>
+<script type="text/javascript">
+var canvasfreq=document.getElementById("canvasfreq");
+var ctxfreq=canvasfreq.getContext("2d");
+var canvaswave=document.getElementById("canvaswave");
+var ctxwave=canvaswave.getContext("2d");
+var rot=0.0;
+function AnimationFrame() {
+    var data = new Uint8Array(1024);
+    // draw frequency data
+    analyser.getByteFrequencyData(data);
+    ctxfreq.clearRect(0, 0, canvasfreq.width, canvasfreq.height);
+    var x=0;
+    var rectw=10;
+    ctxfreq.beginPath();
+    for (var i=0, len=data.length; i < len; i+=rectw) {
+        var ratio=(data[i] / 255);
+        var y=(1-ratio)*canvasfreq.height;
+        //console.log("y:%d",y);
+        ctxfreq.rect(x,y,rectw,canvasfreq.height);
+        x+=rectw;
+    }
+    ctxfreq.stroke();
+
+    // draw wave data
+    analyser.getByteTimeDomainData(data);
+    ctxwave.clearRect(0, 0, canvaswave.width, canvaswave.height);
+    ctxwave.beginPath();
+    for (var i=0, len=data.length; i < len; i++) {
+        var ratio=(data[i] / 255.0);
+        var x=(i/len)*canvaswave.width;
+        var y=(1-ratio)*canvaswave.height;
+        if (i==0) {
+            ctxwave.moveTo(x, y);
+        } else {
+            ctxwave.lineTo(x, y);
+        }
+    }
+    ctxwave.stroke();
+
+    var cubescale=(data[0]/255.0);
+    //console.log("cubescale:%f",cubescale);
+    cube.scale.set(cubescale,cubescale,cubescale);
+    cube.rotation.set(
+      0,
+      cube.rotation.y + 0.01,
+      cube.rotation.z + 0.01
+    )
+    analyserLow.getByteTimeDomainData(data);
+    var spherescale=(data[0]/255.0);
+    console.log("spherescale:%f",spherescale);
+    sphere.scale.set(spherescale,spherescale,spherescale);
+
+    rot+=1.0;
+    camera.position.x = 100 * Math.sin(rot * Math.PI / 180);
+    camera.position.y = 100 * Math.cos(rot * Math.PI / 180);
+    camera.lookAt(cube.position);
+
+    renderer.render( scene, camera );
+}
+setInterval(AnimationFrame, 50);
+</script>
+
+</html>
